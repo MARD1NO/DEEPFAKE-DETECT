@@ -9,10 +9,7 @@ from model_utils import *
 import collections
 import numpy as np
 
-"""
-EfficientNet主体网络
 
-"""
 class Swish(fluid.dygraph.Layer):
     def __init__(self):
         super(Swish, self).__init__()
@@ -22,13 +19,16 @@ class Swish(fluid.dygraph.Layer):
 
 
 class MBConvBlock(fluid.dygraph.Layer):
-    def __init__(self, block_args, global_params, image_size=None):
+    def __init__(self, block_args, global_params, image_size=None, training=True):
         super(MBConvBlock, self).__init__()
         self._block_args = block_args
         self._bn_mom = global_params.batch_norm_momentum
         self._bn_eps = global_params.batch_norm_epsilon
         self.has_se = (self._block_args.se_ratio is not None) and (0 < self._block_args.se_ratio <= 1)
         self.id_skip = block_args.id_skip  # whether to use skip connection and drop connect
+
+        # 控制是否开启dropconnect
+        self.training = training
 
         inp = self._block_args.input_filters  # number of input channels
         oup = self._block_args.input_filters * self._block_args.expand_ratio  # number of output channels
@@ -129,22 +129,30 @@ class MBConvBlock(fluid.dygraph.Layer):
 
         # Skip connection and drop connect
         input_filters, output_filters = self._block_args.input_filters, self._block_args.output_filters
-        if self.id_skip and self._block_args.stride == 1 and input_filters == output_filters:
-            # The combination of skip connection and drop connect brings about stochastic depth.
-            if drop_connect_rate:
-                x = drop_connect(x, survival_prob=1 - drop_connect_rate, training=self.training)
-            x = x + inputs  # skip connection
+        # print("input filters {} output filters {}".format(input_filters, output_filters) )
+        if self.id_skip:
+            # print("SKIP")
+            # print("STRIDE IS ", self._block_args.stride)
+            if self._block_args.stride[0] == 1 and input_filters == output_filters:
+                # The combination of skip connection and drop connect brings about stochastic depth.
+                # print("YES")
+                if self.training and drop_connect_rate:
+                    # print("drop connect!!!!!!!!!!!!!!!!!!!!!!")
+                    x = drop_connect(x, survival_prob=1 - drop_connect_rate, training=self.training)
+                x = x + inputs  # skip connection
         return x
 
 
 class EfficientNet(fluid.dygraph.Layer):
-    def __init__(self, blocks_args=None, global_params=None):
+    def __init__(self, blocks_args=None, global_params=None, training=True):
         super().__init__()
         assert isinstance(blocks_args, list), 'blocks_args should be a list'
         assert len(blocks_args) > 0, 'block args must be greater than 0'
         self._global_params = global_params
         self._blocks_args = blocks_args
         self._blocks = []
+        self.is_test = not training
+
         # Batch norm parameters
         bn_mom = self._global_params.batch_norm_momentum
         bn_eps = self._global_params.batch_norm_epsilon
@@ -246,9 +254,10 @@ class EfficientNet(fluid.dygraph.Layer):
         # Pooling and final linear layer
         x = self._avg_pooling(x)
         x = fluid.layers.flatten(x)
-        x = fluid.layers.dropout(x, self._global_params.dropout_rate)
+        x = fluid.layers.dropout(x, self._global_params.dropout_rate, is_test=self.is_test)
         x = self._fc(x)
         return x
+
 
 from paddle.fluid.dygraph.base import to_variable
 
@@ -262,7 +271,7 @@ if __name__ == "__main__":
     with fluid.dygraph.guard():
         x = np.random.randn(1, 3, 224, 224).astype('float32')
         x = to_variable(x)
-        net = EfficientNet(blocks_args, global_params)
+        net = EfficientNet(blocks_args, global_params, training=True)
 
         out = net(x)
         print(out.shape)

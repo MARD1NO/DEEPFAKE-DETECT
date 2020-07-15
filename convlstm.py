@@ -4,16 +4,15 @@ from paddle.fluid.dygraph.nn import Conv2D
 from paddle.fluid.dygraph import Sequential
 import numpy as np
 
-"""
-卷积版本的LSTM单元
-"""
+
 class ConvLSTMCell(fluid.dygraph.Layer):
     """
     基本cell结构
     """
 
-    def __init__(self, in_channels, hidden_channels, kernel_size):
+    def __init__(self, in_channels, hidden_channels, kernel_size, training=True):
         super(ConvLSTMCell, self).__init__()
+        self.is_test = not training
 
         self.input_dim = in_channels
         self.hidden_dim = hidden_channels
@@ -34,12 +33,11 @@ class ConvLSTMCell(fluid.dygraph.Layer):
         combined_conv = self.conv(combined)
         cc_i, cc_f, cc_o, cc_g = fluid.layers.split(combined_conv, 4, dim=1)
         # 给输入门 加0.2 dropout
-        i = fluid.layers.dropout(fluid.layers.sigmoid(cc_i), dropout_prob=0.2)
+        i = fluid.layers.dropout(fluid.layers.sigmoid(cc_i), dropout_prob=0.2, is_test=self.is_test)
         f = fluid.layers.sigmoid(cc_f)
         # 给输出门 加0.2 dropout
-        o = fluid.layers.dropout(fluid.layers.sigmoid(cc_o), dropout_prob=0.2)
+        o = fluid.layers.dropout(fluid.layers.sigmoid(cc_o), dropout_prob=0.2, is_test=self.is_test)
         g = fluid.layers.tanh(cc_g)
-
 
         c_next = f * c_cur + i * g
         h_next = o * fluid.layers.tanh(c_next)
@@ -47,17 +45,14 @@ class ConvLSTMCell(fluid.dygraph.Layer):
 
     def init_hidden(self, b, h, w):
         # 初始化
-        W = fluid.layers.create_parameter(shape=[b, self.hidden_dim, h, w], dtype='float32', 
-                attr=ParamAttr(initializer=fluid.initializer.XavierInitializer()))
-        B = fluid.layers.create_parameter(shape=[b, self.hidden_dim, h, w], dtype='float32', 
-                attr=ParamAttr(initializer=fluid.initializer.XavierInitializer()))
-        return (W, B)
+        return (fluid.layers.zeros(shape=[b, self.hidden_dim, h, w], dtype='float32'),
+                fluid.layers.zeros(shape=[b, self.hidden_dim, h, w], dtype='float32'))
 
 
 class ConvLSTM(fluid.dygraph.Layer):
 
     def __init__(self, in_channels, hidden_channels, kernel_size, num_layers,
-                 batch_first=True, return_all_layers=False):
+                 batch_first=True, return_all_layers=False, training=True):
         super(ConvLSTM, self).__init__()
         self.cell_list = Sequential()
         self._check_kernel_size_consistency(kernel_size)
@@ -80,7 +75,7 @@ class ConvLSTM(fluid.dygraph.Layer):
             self.cell_list.add_sublayer(name='{}'.format(i), sublayer=ConvLSTMCell(in_channels=cur_input_dim,
                                                                                    hidden_channels=self.hidden_dim[i],
                                                                                    kernel_size=self.kernel_size[i],
-                                                                                   ))
+                                                                                   training=training))
 
     def forward(self, input_tensor, hidden_state=None):
         """
@@ -147,10 +142,10 @@ class ConvLSTM(fluid.dygraph.Layer):
 class ConvSLSTM(fluid.dygraph.Layer):
     # Constructor 单向LSTM
     def __init__(self, in_channels, hidden_channels,
-                 kernel_size, num_layers, batch_first=True):
+                 kernel_size, num_layers, batch_first=True, training=True):
         super(ConvSLSTM, self).__init__()
         self.forward_net = ConvLSTM(in_channels, hidden_channels, kernel_size,
-                                    num_layers, batch_first=batch_first)
+                                    num_layers, batch_first=batch_first, training=training)
 
     def forward(self, xforward):
         """
@@ -163,15 +158,17 @@ class ConvSLSTM(fluid.dygraph.Layer):
 
         return y_out_fwd
 
+
 class ConvBLSTM(fluid.dygraph.Layer):
     # 双向LSTM网络
     def __init__(self, in_channels, hidden_channels,
-                 kernel_size, num_layers, batch_first=True):
+                 kernel_size, num_layers, batch_first=True, training=True):
         super(ConvBLSTM, self).__init__()
-        self.forward_net = ConvLSTM(in_channels, hidden_channels//2, kernel_size,
-                                    num_layers, batch_first=batch_first)
-        self.reverse_net = ConvLSTM(in_channels, hidden_channels//2, kernel_size,
-                                    num_layers, batch_first=batch_first)
+        self.forward_net = ConvLSTM(in_channels, hidden_channels // 2, kernel_size,
+                                    num_layers, batch_first=batch_first, training=training)
+        self.reverse_net = ConvLSTM(in_channels, hidden_channels // 2, kernel_size,
+                                    num_layers, batch_first=batch_first, training=training)
+
     def forward(self, xforward):
         """
         xforward, xreverse = B T C H W tensors.
@@ -181,14 +178,16 @@ class ConvBLSTM(fluid.dygraph.Layer):
         y_out_fwd, _ = self.forward_net(xforward)
         y_out_rev, _ = self.reverse_net(xreverse)
         y_out_fwd = y_out_fwd[-1]  # outputs of last CLSTM layer = B, T, C, H, W
-        y_out_rev = y_out_rev[-1] 
+        y_out_rev = y_out_rev[-1]
 
         # print(reversed_idx)
         y_out_rev = y_out_rev[:, ::-1, :, :, :]
         # print(y_out_rev.shape)
         ycat = fluid.layers.concat([y_out_fwd, y_out_rev], axis=2)
 
-        return ycat                                
+        return ycat
+
+
 from paddle.fluid.dygraph.base import to_variable
 
 if __name__ == '__main__':
@@ -200,7 +199,7 @@ if __name__ == '__main__':
 
         # print("测试单向LSTM")
         # model = ConvSLSTM(in_channels=1280, hidden_channels=256, kernel_size=(3, 3), num_layers=2)
-        
+
         print("测试双向LSTM")
         model = ConvBLSTM(in_channels=1280, hidden_channels=256, kernel_size=(3, 3), num_layers=2)
         out = model(x)

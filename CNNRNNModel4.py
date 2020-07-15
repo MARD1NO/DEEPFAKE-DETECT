@@ -10,21 +10,16 @@ from model_utils import *
 from convlstm import ConvBLSTM
 from paddle.fluid.dygraph import Linear
 
-"""
-CNN + 双向LSTM
-区别在调整了全连接层数量
 
-后面一个CNN_RNN_Model5 则是加入了 标签平滑的功能
-"""
 class CNNEnoder(fluid.dygraph.Layer):
-    def __init__(self, drop_p=0.5):
+    def __init__(self, drop_p=0.5, training=True):
         super(CNNEnoder, self).__init__()
         model_name = "efficientnet-b0"
         override_params = {"num_classes": 512}
         blocks_args, global_params = get_model_params(model_name, override_params=override_params)
-       
+        self.is_test = not training
         self.drop_p = drop_p
-        self.BackBone = EfficientNet(blocks_args, global_params)
+        self.BackBone = EfficientNet(blocks_args, global_params, training=training)
 
 
     def forward(self, x_3d):
@@ -33,7 +28,7 @@ class CNNEnoder(fluid.dygraph.Layer):
             x = self.BackBone(x_3d[:, time, :, :, :])
             x = fluid.layers.flatten(x, axis=1)
             x = fluid.layers.relu(x)
-            x = fluid.layers.dropout(x, self.drop_p)
+            x = fluid.layers.dropout(x, self.drop_p, is_test=self.is_test)
             cnn_embed_seq.append(x)
 
         cnn_embed_seq = fluid.layers.stack(cnn_embed_seq, axis=0)
@@ -48,9 +43,11 @@ class CNNEnoder(fluid.dygraph.Layer):
 
 
 class CNN_RNN_Model4(fluid.dygraph.Layer):
-    def __init__(self):
+    def __init__(self, use_label_smooth=False, training=True):
         super(CNN_RNN_Model4, self).__init__()
-        self.EfficientNet = CNNEnoder()
+        self.use_label_smooth = use_label_smooth
+        self.is_test = not training
+        self.EfficientNet = CNNEnoder(training=training)
         self.RNN =ConvBLSTM(in_channels=512, hidden_channels=64, kernel_size=(3, 3), num_layers=1)
         self.fc1 = Linear(1280, 512, param_attr=ParamAttr(initializer=fluid.initializer.XavierInitializer()))
         self.fc2 = Linear(512, 256, param_attr=ParamAttr(initializer=fluid.initializer.XavierInitializer()))
@@ -61,7 +58,7 @@ class CNN_RNN_Model4(fluid.dygraph.Layer):
         x = self.EfficientNet(x)
         x = self.RNN(x)
         # print(x.shape)
-        x = fluid.layers.dropout(x, 0.5)
+        x = fluid.layers.dropout(x, 0.5, is_test=self.is_test)
         x = fluid.layers.flatten(x)
         # print(x.shape)
         x = self.fc1(x)
@@ -82,9 +79,10 @@ class CNN_RNN_Model5(fluid.dygraph.Layer):
     """
     带label_smooth版本
     """
-    def __init__(self, use_label_smooth=False):
+    def __init__(self, use_label_smooth=False, training=True):
         super(CNN_RNN_Model5, self).__init__()
         self.use_label_smooth = use_label_smooth
+        self.is_test = not training
         self.EfficientNet = CNNEnoder()
         self.RNN =ConvBLSTM(in_channels=512, hidden_channels=64, kernel_size=(3, 3), num_layers=1)
         self.fc1 = Linear(1280, 512, param_attr=ParamAttr(initializer=fluid.initializer.XavierInitializer()))
@@ -96,7 +94,7 @@ class CNN_RNN_Model5(fluid.dygraph.Layer):
         x = self.EfficientNet(x)
         x = self.RNN(x)
         # print(x.shape)
-        x = fluid.layers.dropout(x, 0.5)
+        x = fluid.layers.dropout(x, 0.5, is_test=self.is_test)
         x = fluid.layers.flatten(x)
         # print(x.shape)
         x = self.fc1(x)

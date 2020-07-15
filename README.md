@@ -8,3 +8,11 @@
 5. 重新造了数据集，选的是DFDC中的part14分包数据
 6. 更合理的训练集验证集分配策略，两者互不相交
 7. FAKE:REAL比例在6.5:3.5
+
+# 7.15 FIX BUG
+
+1. 修复了EfficientNet跨层连接bug，现在跨层连接与drop connect运行正常
+2. 为后续模型增加了一键dropout，方便evaluate
+3. 修复了ConvLSTM 的bug，将隐层正确初始化
+4. 修复了eval验证时，输出不相同的bug（原因出自LSTM单元初始化参数没有加入到动态图当中)
+
