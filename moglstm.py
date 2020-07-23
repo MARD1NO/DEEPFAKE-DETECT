@@ -74,11 +74,8 @@ class ConvMogLSTMCell(fluid.dygraph.Layer):
 
     def init_hidden(self, b, h, w):
         # 初始化
-        W = fluid.layers.create_parameter(shape=[b, self.hidden_dim, h, w], dtype='float32',
-                                          attr=ParamAttr(initializer=fluid.initializer.XavierInitializer()))
-        B = fluid.layers.create_parameter(shape=[b, self.hidden_dim, h, w], dtype='float32',
-                                          attr=ParamAttr(initializer=fluid.initializer.XavierInitializer()))
-        return W, B
+        return (fluid.layers.zeros(shape=[b, self.hidden_dim, h, w], dtype='float32'),
+                fluid.layers.zeros(shape=[b, self.hidden_dim, h, w], dtype='float32'))
 
 
 class ConvMogLSTM(fluid.dygraph.Layer):
